@@ -1,0 +1,88 @@
+! =====================================================================
+! R2-BRANCH  (Cisco ISR 2911) - Branch office router
+! Lab config for Packet Tracer. Passwords/keys are placeholders.
+! Prerequisite: securityk9 license enabled + reload (see README Step 1)
+! SW2 needs no config for this lab (all ports in default VLAN 1).
+! NOTE: both NAT exemption wildcards must be 0.0.255.255 (a 0.0.0.255
+!       typo here caused branch traffic to be NATed and skip the VPN).
+! =====================================================================
+enable
+configure terminal
+!
+hostname R2-BRANCH
+no ip domain-lookup
+enable secret <ENABLE-SECRET>
+service password-encryption
+banner motd # Authorized access only. Lab device. #
+!
+! --- LAN ---
+interface GigabitEthernet0/0
+ description Branch LAN to SW2
+ ip address 10.20.10.1 255.255.255.0
+ ip nat inside
+ no shutdown
+!
+! --- WAN ---
+interface GigabitEthernet0/1
+ description WAN to ISP
+ ip address 198.51.100.2 255.255.255.252
+ ip nat outside
+ no shutdown
+!
+ip route 0.0.0.0 0.0.0.0 198.51.100.1
+!
+! --- DHCP (DNS points to SRV1 at HQ, reached over the VPN) ---
+ip dhcp excluded-address 10.20.10.1 10.20.10.10
+ip dhcp pool BRANCH
+ network 10.20.10.0 255.255.255.0
+ default-router 10.20.10.1
+ dns-server 10.10.30.10
+!
+! --- NAT / PAT (with VPN exemption) ---
+access-list 120 deny   ip 10.20.0.0 0.0.255.255 10.10.0.0 0.0.255.255
+access-list 120 permit ip 10.20.0.0 0.0.255.255 any
+ip nat inside source list 120 interface GigabitEthernet0/1 overload
+!
+! --- Site-to-site IPsec VPN to R1-HQ (mirror of R1) ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha
+ authentication pre-share
+ group 5
+ lifetime 86400
+!
+crypto isakmp key <PRE-SHARED-KEY> address 203.0.113.2
+!
+crypto ipsec transform-set VPN-SET esp-aes 256 esp-sha-hmac
+!
+access-list 110 permit ip 10.20.10.0 0.0.0.255 10.10.10.0 0.0.0.255
+access-list 110 permit ip 10.20.10.0 0.0.0.255 10.10.30.0 0.0.0.255
+!
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 203.0.113.2
+ set transform-set VPN-SET
+ match address 110
+!
+interface GigabitEthernet0/1
+ crypto map VPN-MAP
+!
+! --- Management / SSH (branch LAN + HQ staff) ---
+ip domain-name smallbiz.lab
+username admin privilege 15 secret <ADMIN-PASSWORD>
+crypto key generate rsa general-keys modulus 2048
+ip ssh version 2
+!
+access-list 10 permit 10.10.10.0 0.0.0.255
+access-list 10 permit 10.20.10.0 0.0.0.255
+!
+line console 0
+ login local
+ exec-timeout 10 0
+line vty 0 4
+ login local
+ transport input ssh
+ access-class 10 in
+ exec-timeout 10 0
+!
+end
+copy running-config startup-config

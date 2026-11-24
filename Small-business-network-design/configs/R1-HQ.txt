@@ -1,0 +1,151 @@
+! =====================================================================
+! R1-HQ  (Cisco ISR 2911) - HQ edge router
+! Lab config for Packet Tracer. Passwords/keys are placeholders.
+! Prerequisite: securityk9 license enabled + reload (see README Step 1)
+! =====================================================================
+enable
+configure terminal
+!
+! --- Basics ---
+hostname R1-HQ
+no ip domain-lookup
+enable secret <ENABLE-SECRET>
+service password-encryption
+banner motd # Authorized access only. Lab device. #
+!
+! --- Inter-VLAN routing (router-on-a-stick) ---
+interface GigabitEthernet0/0
+ description Trunk to SW1 G0/1
+ no ip address
+ no shutdown
+!
+interface GigabitEthernet0/0.10
+ description VLAN 10 STAFF
+ encapsulation dot1Q 10
+ ip address 10.10.10.1 255.255.255.0
+ ip nat inside
+!
+interface GigabitEthernet0/0.20
+ description VLAN 20 GUEST
+ encapsulation dot1Q 20
+ ip address 10.10.20.1 255.255.255.0
+ ip nat inside
+!
+interface GigabitEthernet0/0.30
+ description VLAN 30 SERVERS
+ encapsulation dot1Q 30
+ ip address 10.10.30.1 255.255.255.0
+ ip nat inside
+!
+interface GigabitEthernet0/0.99
+ description VLAN 99 MGMT
+ encapsulation dot1Q 99
+ ip address 10.10.99.1 255.255.255.0
+!
+interface GigabitEthernet0/0.999
+ description Native VLAN (unused)
+ encapsulation dot1Q 999 native
+!
+! --- WAN ---
+interface GigabitEthernet0/1
+ description WAN to ISP
+ ip address 203.0.113.2 255.255.255.252
+ ip nat outside
+ no shutdown
+!
+ip route 0.0.0.0 0.0.0.0 203.0.113.1
+!
+! --- DHCP ---
+ip dhcp excluded-address 10.10.10.1 10.10.10.10
+ip dhcp excluded-address 10.10.20.1 10.10.20.10
+!
+ip dhcp pool STAFF
+ network 10.10.10.0 255.255.255.0
+ default-router 10.10.10.1
+ dns-server 10.10.30.10
+!
+ip dhcp pool GUEST
+ network 10.10.20.0 255.255.255.0
+ default-router 10.10.20.1
+ dns-server 10.10.30.10
+!
+! --- NAT / PAT (with VPN exemption) ---
+access-list 120 deny   ip 10.10.0.0 0.0.255.255 10.20.0.0 0.0.255.255
+access-list 120 permit ip 10.10.0.0 0.0.255.255 any
+ip nat inside source list 120 interface GigabitEthernet0/1 overload
+!
+! --- Firewall rules ---
+ip access-list extended GUEST_IN
+ remark Allow DHCP to the router
+ permit udp any eq 68 any eq 67
+ remark Allow DNS to SRV1 only
+ permit udp 10.10.20.0 0.0.0.255 host 10.10.30.10 eq 53
+ remark Block all internal networks
+ deny   ip 10.10.20.0 0.0.0.255 10.0.0.0 0.255.255.255
+ remark Internet allowed
+ permit ip 10.10.20.0 0.0.0.255 any
+!
+ip access-list extended SERVERS_OUT
+ remark Staff: DNS, web, ping
+ permit udp 10.10.10.0 0.0.0.255 host 10.10.30.10 eq 53
+ permit tcp 10.10.10.0 0.0.0.255 host 10.10.30.10 eq 53
+ permit tcp 10.10.10.0 0.0.0.255 host 10.10.30.10 eq 80
+ permit tcp 10.10.10.0 0.0.0.255 host 10.10.30.10 eq 443
+ permit icmp 10.10.10.0 0.0.0.255 10.10.30.0 0.0.0.255
+ remark Guests: DNS only
+ permit udp 10.10.20.0 0.0.0.255 host 10.10.30.10 eq 53
+ remark Branch over VPN
+ permit ip 10.20.10.0 0.0.0.255 10.10.30.0 0.0.0.255
+ remark Replies to connections the servers started
+ permit tcp any 10.10.30.0 0.0.0.255 established
+ permit icmp any 10.10.30.0 0.0.0.255 echo-reply
+ deny   ip any any
+!
+interface GigabitEthernet0/0.20
+ ip access-group GUEST_IN in
+!
+interface GigabitEthernet0/0.30
+ ip access-group SERVERS_OUT out
+!
+! --- Site-to-site IPsec VPN to R2-BRANCH ---
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha
+ authentication pre-share
+ group 5
+ lifetime 86400
+!
+crypto isakmp key <PRE-SHARED-KEY> address 198.51.100.2
+!
+crypto ipsec transform-set VPN-SET esp-aes 256 esp-sha-hmac
+!
+access-list 110 permit ip 10.10.10.0 0.0.0.255 10.20.10.0 0.0.0.255
+access-list 110 permit ip 10.10.30.0 0.0.0.255 10.20.10.0 0.0.0.255
+!
+crypto map VPN-MAP 10 ipsec-isakmp
+ set peer 198.51.100.2
+ set transform-set VPN-SET
+ match address 110
+!
+interface GigabitEthernet0/1
+ crypto map VPN-MAP
+!
+! --- Management / SSH (staff subnet only) ---
+ip domain-name smallbiz.lab
+username admin privilege 15 secret <ADMIN-PASSWORD>
+crypto key generate rsa general-keys modulus 2048
+ip ssh version 2
+!
+access-list 10 permit 10.10.10.0 0.0.0.255
+!
+line console 0
+ login local
+ exec-timeout 10 0
+line vty 0 4
+ login local
+ transport input ssh
+ access-class 10 in
+ exec-timeout 10 0
+!
+end
+copy running-config startup-config

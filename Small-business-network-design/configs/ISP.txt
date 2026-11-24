@@ -1,0 +1,32 @@
+! =====================================================================
+! ISP  (Cisco ISR 2911) - simulated internet provider
+! Only directly connected networks. No routes to private (10.x) ranges,
+! just like a real ISP, so HQ/branch must use NAT to reach the internet.
+! =====================================================================
+enable
+configure terminal
+!
+hostname ISP
+no ip domain-lookup
+!
+interface GigabitEthernet0/0
+ description Link to R1-HQ
+ ip address 203.0.113.1 255.255.255.252
+ no shutdown
+!
+interface GigabitEthernet0/1
+ description Link to R2-BRANCH
+ ip address 198.51.100.1 255.255.255.252
+ no shutdown
+!
+interface GigabitEthernet0/2
+ description "Internet" segment with WEB-INET (192.0.2.10)
+ ip address 192.0.2.1 255.255.255.0
+ no shutdown
+!
+end
+copy running-config startup-config
+!
+! WEB-INET server (Server-PT, set in the GUI):
+!   IP 192.0.2.10  Mask 255.255.255.0  Gateway 192.0.2.1
+!   Services > HTTP: On
